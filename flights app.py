@@ -88,7 +88,7 @@ def init_mongodb_connection():
     
     try:
         mongo_client = MongoClient(MONGO_URI)
-         = mongo_client["ticketing"]
+        mongo_db = mongo_client["ticketing"]
         return mongo_client, 
     except Exception as e:
         st.error(f"Error connecting to MongoDB: {e}")
