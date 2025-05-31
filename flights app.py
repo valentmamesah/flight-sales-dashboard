@@ -305,7 +305,7 @@ def main():
     # Validasi tanggal
     if start_date > end_date:
         st.sidebar.error("❌ Tanggal mulai tidak boleh lebih besar dari tanggal selesai!")
-        return
+        st.stop()
     
     # Tampilkan durasi periode
     period_days = (end_date - start_date).days + 1
@@ -357,7 +357,7 @@ def main():
         
         if not driver or not mongo_db:
             st.error("❌ Gagal terhubung ke database!")
-            return
+            st.stop()
         
         orders_collection = mongo_db["orders"]
         
