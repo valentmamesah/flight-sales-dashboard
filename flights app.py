@@ -353,7 +353,7 @@ def main():
     if st.button("🚀 Jalankan Analisis", type="primary"):
         # Inisialisasi koneksi
         driver = init_neo4j_connection()
-        mongo_client,  = init_mongodb_connection()
+        mongo_client, mongo_db = init_mongodb_connection()
         
         if driver is None or mongo_db is None:
             st.error("❌ Gagal terhubung ke database!")
