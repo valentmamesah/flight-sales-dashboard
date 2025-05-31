@@ -336,7 +336,7 @@ def main():
             driver = init_neo4j_connection()
             mongo_client,  = init_mongodb_connection()
             
-            if driver and :
+            if driver and mongo_db:
                 # MongoDB indexes
                 if create_mongodb_indexes():
                     st.sidebar.success("✅ MongoDB indexes created")
