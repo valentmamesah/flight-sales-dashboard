@@ -252,34 +252,105 @@ def get_sales_by_date(orders_collection, start_date, end_date):
 # MAIN APP
 # ----------------------------------------
 def main():
-    st.title("Analisis Penjualan Tiket")
+    st.title("✈️ Analisis Penjualan Tiket")
+    st.markdown("---")
     
-    # Input periode analisis
-    col1, col2 = st.columns(2)
+    # Sidebar untuk konfigurasi
+    st.sidebar.header("⚙️ Konfigurasi")
     
-    with col1:
-        start_date = st.date_input(
-            "Tanggal Mulai",
-            value=date(2023, 3, 10)
-        )
+    # Input tanggal custom
+    st.sidebar.subheader("📅 Pilih Periode Analisis")
     
-    with col2:
-        end_date = st.date_input(
-            "Tanggal Selesai",
-            value=date(2023, 4, 9)
-        )
+    # Preset periode
+    preset_option = st.sidebar.selectbox(
+        "Pilih Preset Periode:",
+        ["Custom", "Ramadhan 2023", "Bulan Ini", "3 Bulan Terakhir", "Tahun Ini"]
+    )
+    
+    # Set default dates berdasarkan preset
+    if preset_option == "Ramadhan 2023":
+        default_start = date(2023, 3, 10)
+        default_end = date(2023, 4, 9)
+    elif preset_option == "Bulan Ini":
+        today = date.today()
+        default_start = date(today.year, today.month, 1)
+        default_end = today
+    elif preset_option == "3 Bulan Terakhir":
+        today = date.today()
+        if today.month >= 3:
+            default_start = date(today.year, today.month - 2, 1)
+        else:
+            default_start = date(today.year - 1, today.month + 10, 1)
+        default_end = today
+    elif preset_option == "Tahun Ini":
+        today = date.today()
+        default_start = date(today.year, 1, 1)
+        default_end = today
+    else:  # Custom
+        default_start = date(2023, 3, 10)
+        default_end = date(2023, 4, 9)
+    
+    # Input tanggal
+    start_date = st.sidebar.date_input(
+        "Tanggal Mulai",
+        value=default_start,
+        help="Pilih tanggal mulai periode analisis"
+    )
+    end_date = st.sidebar.date_input(
+        "Tanggal Selesai",
+        value=default_end,
+        help="Pilih tanggal akhir periode analisis"
+    )
     
     # Validasi tanggal
     if start_date > end_date:
-        st.error("Tanggal mulai tidak boleh lebih besar dari tanggal selesai!")
+        st.sidebar.error("❌ Tanggal mulai tidak boleh lebih besar dari tanggal selesai!")
         return
+    
+    # Tampilkan durasi periode
+    period_days = (end_date - start_date).days + 1
+    st.sidebar.info(f"📊 Periode: {period_days} hari")
     
     # Konversi ke datetime
     start_datetime = datetime.combine(start_date, datetime.min.time())
     end_datetime = datetime.combine(end_date, datetime.max.time())
     
+    # Input jumlah rute
+    limit_routes = st.sidebar.slider(
+        "Jumlah Rute Terjauh",
+        min_value=10,
+        max_value=100,
+        value=50,
+        step=10
+    )
+    
+    # Opsi analisis tambahan
+    st.sidebar.subheader("📊 Opsi Analisis")
+    show_daily_trend = st.sidebar.checkbox("Tampilkan Trend Harian", value=True)
+    show_route_analysis = st.sidebar.checkbox("Analisis Rute Terjauh", value=True)
+    
+    # Tombol untuk setup index
+    if st.sidebar.button("🔧 Setup Database Indexes"):
+        with st.spinner("Membuat indexes..."):
+            # Inisialisasi koneksi
+            driver = init_neo4j_connection()
+            mongo_client, mongo_db = init_mongodb_connection()
+            
+            if driver and mongo_db:
+                # MongoDB indexes
+                if create_mongodb_indexes(mongo_db):
+                    st.sidebar.success("✅ MongoDB indexes created")
+                
+                # Neo4j indexes
+                try:
+                    with driver.session() as session:
+                        session.execute_write(create_neo4j_indexes)
+                    st.sidebar.success("✅ Neo4j indexes created")
+                except Exception as e:
+                    st.sidebar.error(f"❌ Neo4j index error: {e}")
+    
     # Tombol untuk menjalankan analisis
-    if st.button("Jalankan Analisis", type="primary"):
+    if st.button("🚀 Jalankan Analisis", type="primary"):
         # Inisialisasi koneksi
         driver = init_neo4j_connection()
         mongo_client, mongo_db = init_mongodb_connection()
@@ -294,17 +365,44 @@ def main():
         results_container = st.container()
         
         with results_container:
-            with st.spinner("Memproses data..."):
-                # Total Penjualan Periode
-                total_penjualan, total_orders, mongo_duration = get_total_sales_period(
+            # Progress bar
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            # 1. Total Penjualan Periode
+            status_text.text("📦 Menghitung total penjualan periode...")
+            progress_bar.progress(20)
+            
+            total_penjualan, total_orders, mongo_duration = get_total_sales_period(
+                orders_collection, start_datetime, end_datetime
+            )
+            
+            # 2. Trend Harian (opsional)
+            df_daily = pd.DataFrame()
+            daily_duration = 0
+            if show_daily_trend:
+                status_text.text("📈 Menganalisis trend harian...")
+                progress_bar.progress(40)
+                df_daily, daily_duration = get_sales_by_date(
                     orders_collection, start_datetime, end_datetime
                 )
+            
+            # 3. Rute Terjauh dari Neo4j (opsional)
+            df_routes = pd.DataFrame()
+            neo_duration = 0
+            df_sorted = pd.DataFrame()
+            batch_duration = 0
+            
+            if show_route_analysis:
+                status_text.text("🛫 Mengambil rute terjauh dari Neo4j...")
+                progress_bar.progress(60)
                 
-                # Rute Terjauh dari Neo4j
-                df_routes, neo_duration = get_longest_routes(driver, 50)
+                df_routes, neo_duration = get_longest_routes(driver, limit_routes)
                 
-                # Penjualan per Rute
-                df_sorted = pd.DataFrame()
+                # 4. Penjualan per Rute
+                status_text.text("📊 Menghitung penjualan per rute...")
+                progress_bar.progress(80)
+                
                 if not df_routes.empty:
                     origin_list = df_routes["origin"].unique().tolist()
                     destination_list = df_routes["destination"].unique().tolist()
@@ -314,7 +412,7 @@ def main():
                         start_datetime, end_datetime
                     )
                     
-                    # Gabungkan data
+                    # 5. Gabungkan data
                     df_combined = pd.merge(
                         df_routes,
                         df_sales,
@@ -331,68 +429,255 @@ def main():
                         ascending=False
                     )
             
+            progress_bar.progress(100)
+            status_text.text("✅ Analisis selesai!")
+            
             # Tampilkan hasil
             st.markdown("---")
             
             # Metrics
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             
             with col1:
                 st.metric(
-                    "Total Penjualan",
+                    "💰 Total Penjualan",
                     f"Rp {total_penjualan:,}"
                 )
             
             with col2:
                 st.metric(
-                    "Total Orders",
+                    "📦 Total Orders",
                     f"{total_orders:,}"
                 )
             
             with col3:
                 avg_order_value = total_penjualan / total_orders if total_orders > 0 else 0
                 st.metric(
-                    "Rata-rata per Order",
+                    "💳 Rata-rata per Order",
                     f"Rp {avg_order_value:,.0f}"
                 )
             
-            # Tampilkan data
-            if not df_sorted.empty:
-                st.subheader("Penjualan per Rute")
+            with col4:
+                daily_avg = total_penjualan / period_days if period_days > 0 else 0
+                st.metric(
+                    "📊 Rata-rata Harian",
+                    f"Rp {daily_avg:,.0f}"
+                )
+            
+            # Performance metrics
+            st.markdown("### ⚡ Performance Metrics")
+            perf_col1, perf_col2, perf_col3, perf_col4 = st.columns(4)
+            
+            with perf_col1:
+                st.metric("MongoDB Query", f"{mongo_duration:.4f}s")
+            with perf_col2:
+                if show_daily_trend:
+                    st.metric("Daily Trend Query", f"{daily_duration:.4f}s")
+            with perf_col3:
+                if show_route_analysis:
+                    st.metric("Neo4j Query", f"{neo_duration:.4f}s")
+            with perf_col4:
+                if show_route_analysis:
+                    st.metric("Route Sales Query", f"{batch_duration:.4f}s")
+            
+            # Tabs untuk hasil
+            tabs = ["📊 Ringkasan"]
+            if show_daily_trend:
+                tabs.append("📈 Trend Harian")
+            if show_route_analysis:
+                tabs.extend(["🛫 Rute Terjauh", "💹 Penjualan per Rute", "📈 Visualisasi Rute"])
+            
+            tab_objects = st.tabs(tabs)
+            tab_index = 0
+            
+            # Tab Ringkasan
+            with tab_objects[tab_index]:
+                st.subheader("📊 Ringkasan Analisis")
                 
-                # Top 5 rute terlaris
-                top_routes = df_sorted[df_sorted['total_penjualan_rute'] > 0].head(5)
-                if not top_routes.empty:
-                    st.write("**Top 5 Rute Terlaris:**")
-                    for idx, row in top_routes.iterrows():
-                        st.write(f"• {row['origin']} → {row['destination']}: Rp {row['total_penjualan_rute']:,.0f} ({row['jumlah_order_rute']:.0f} orders)")
+                col1, col2 = st.columns(2)
                 
-                # Tabel lengkap
-                with st.expander("Lihat Semua Data Rute"):
-                    st.dataframe(
-                        df_sorted,
-                        use_container_width=True,
-                        column_config={
-                            "origin": "Asal",
-                            "destination": "Tujuan",
-                            "distance_km": st.column_config.NumberColumn(
-                                "Jarak (km)",
-                                format="%.0f"
-                            ),
-                            "flight_time_hr": st.column_config.NumberColumn(
-                                "Waktu Terbang (jam)",
-                                format="%.2f"
-                            ),
-                            "total_penjualan_rute": st.column_config.NumberColumn(
-                                "Total Penjualan",
-                                format="Rp %.0f"
-                            ),
-                            "jumlah_order_rute": st.column_config.NumberColumn(
-                                "Jumlah Order",
-                                format="%.0f"
+                with col1:
+                    st.info(f"""
+                    **Periode Analisis:** {start_date} - {end_date} ({period_days} hari)
+                    
+                    **Total Penjualan:** Rp {total_penjualan:,}
+                    
+                    **Total Orders:** {total_orders:,}
+                    
+                    **Rata-rata per Order:** Rp {avg_order_value:,.0f}
+                    
+                    **Rata-rata Harian:** Rp {daily_avg:,.0f}
+                    """)
+                
+                with col2:
+                    if show_route_analysis and not df_sorted.empty:
+                        top_route = df_sorted.iloc[0]
+                        st.success(f"""
+                        **Rute Terlaris:**
+                        
+                        🛫 {top_route['origin']} → {top_route['destination']}
+                        
+                        💰 Penjualan: Rp {top_route['total_penjualan_rute']:,.0f}
+                        
+                        📦 Orders: {top_route['jumlah_order_rute']:.0f}
+                        
+                        📏 Jarak: {top_route['distance_km']:.0f} km
+                        """)
+                    else:
+                        performance_summary = f"""
+                        **Performance Summary:**
+                        
+                        ⚡ MongoDB: {mongo_duration:.4f}s
+                        """
+                        if show_daily_trend:
+                            performance_summary += f"\n⚡ Daily Trend: {daily_duration:.4f}s"
+                        if show_route_analysis:
+                            performance_summary += f"\n⚡ Neo4j: {neo_duration:.4f}s"
+                            performance_summary += f"\n⚡ Route Sales: {batch_duration:.4f}s"
+                        
+                        st.info(performance_summary)
+            
+            tab_index += 1
+            
+            # Tab Trend Harian
+            if show_daily_trend:
+                with tab_objects[tab_index]:
+                    st.subheader("📈 Trend Penjualan Harian")
+                    if not df_daily.empty:
+                        # Chart trend harian
+                        fig_daily = px.line(
+                            df_daily,
+                            x='date',
+                            y='daily_sales',
+                            title='Trend Penjualan Harian',
+                            labels={
+                                'date': 'Tanggal',
+                                'daily_sales': 'Penjualan Harian (Rp)'
+                            }
+                        )
+                        fig_daily.update_traces(line_color='#1f77b4', line_width=3)
+                        st.plotly_chart(fig_daily, use_container_width=True)
+                        
+                        # Tabel data harian
+                        st.subheader("📊 Data Harian")
+                        st.dataframe(
+                            df_daily,
+                            use_container_width=True,
+                            column_config={
+                                "date": st.column_config.DateColumn("Tanggal"),
+                                "daily_sales": st.column_config.NumberColumn(
+                                    "Penjualan Harian",
+                                    format="Rp %.0f"
+                                ),
+                                "daily_orders": st.column_config.NumberColumn(
+                                    "Orders Harian",
+                                    format="%.0f"
+                                )
+                            }
+                        )
+                    else:
+                        st.warning("Tidak ada data penjualan harian untuk periode ini.")
+                
+                tab_index += 1
+            
+            # Tab Rute Terjauh
+            if show_route_analysis:
+                with tab_objects[tab_index]:
+                    st.subheader("🛫 Top Rute Terjauh")
+                    if not df_routes.empty:
+                        st.dataframe(
+                            df_routes,
+                            use_container_width=True,
+                            column_config={
+                                "distance_km": st.column_config.NumberColumn(
+                                    "Jarak (km)",
+                                    format="%.0f"
+                                ),
+                                "flight_time_hr": st.column_config.NumberColumn(
+                                    "Waktu Terbang (jam)",
+                                    format="%.2f"
+                                )
+                            }
+                        )
+                    else:
+                        st.warning("Tidak ada data rute ditemukan.")
+                
+                tab_index += 1
+                
+                # Tab Penjualan per Rute
+                with tab_objects[tab_index]:
+                    st.subheader("💹 Penjualan per Rute (Diurutkan)")
+                    if not df_sorted.empty:
+                        st.dataframe(
+                            df_sorted,
+                            use_container_width=True,
+                            column_config={
+                                "distance_km": st.column_config.NumberColumn(
+                                    "Jarak (km)",
+                                    format="%.0f"
+                                ),
+                                "flight_time_hr": st.column_config.NumberColumn(
+                                    "Waktu Terbang (jam)",
+                                    format="%.2f"
+                                ),
+                                "total_penjualan_rute": st.column_config.NumberColumn(
+                                    "Total Penjualan",
+                                    format="Rp %.0f"
+                                ),
+                                "jumlah_order_rute": st.column_config.NumberColumn(
+                                    "Jumlah Order",
+                                    format="%.0f"
+                                )
+                            }
+                        )
+                    else:
+                        st.warning("Tidak ada data penjualan ditemukan.")
+                
+                tab_index += 1
+                
+                # Tab Visualisasi Rute
+                with tab_objects[tab_index]:
+                    st.subheader("📈 Visualisasi Data Rute")
+                    
+                    if not df_sorted.empty:
+                        # Filter data yang memiliki penjualan
+                        df_viz = df_sorted[df_sorted['total_penjualan_rute'] > 0].head(20)
+                        
+                        if not df_viz.empty:
+                            # Chart 1: Bar chart penjualan per rute
+                            fig1 = px.bar(
+                                df_viz,
+                                x='total_penjualan_rute',
+                                y=df_viz['origin'] + ' → ' + df_viz['destination'],
+                                orientation='h',
+                                title='Top 20 Rute dengan Penjualan Tertinggi',
+                                labels={
+                                    'total_penjualan_rute': 'Total Penjualan (Rp)',
+                                    'y': 'Rute'
+                                }
                             )
-                        }
-                    )
+                            fig1.update_layout(height=600)
+                            st.plotly_chart(fig1, use_container_width=True)
+                            
+                            # Chart 2: Scatter plot jarak vs penjualan
+                            fig2 = px.scatter(
+                                df_viz,
+                                x='distance_km',
+                                y='total_penjualan_rute',
+                                size='jumlah_order_rute',
+                                hover_data=['origin', 'destination', 'flight_time_hr'],
+                                title='Hubungan Jarak vs Penjualan',
+                                labels={
+                                    'distance_km': 'Jarak (km)',
+                                    'total_penjualan_rute': 'Total Penjualan (Rp)',
+                                    'jumlah_order_rute': 'Jumlah Order'
+                                }
+                            )
+                            st.plotly_chart(fig2, use_container_width=True)
+                        else:
+                            st.info("Tidak ada data penjualan untuk divisualisasikan.")
+                    else:
+                        st.warning("Tidak ada data untuk divisualisasikan.")
         
         # Tutup koneksi
         driver.close()
