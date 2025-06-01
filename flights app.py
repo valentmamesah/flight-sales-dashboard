@@ -476,7 +476,6 @@ def main():
     # TAB 1: TANPA OPTIMIZATION
     with tab1:
         st.header("🐌 Skenario 1: Tanpa Indexing & Optimization")
-        st.info("📝 **Karakteristik:**\n- Tanpa database indexes\n- Query individual per rute (N+1 queries)\n- Tidak ada batch processing")
         
         if st.button("🚀 Jalankan Skenario 1", key="scenario1"):
             with st.spinner("Menjalankan analisis tanpa optimization..."):
@@ -546,7 +545,6 @@ def main():
     # TAB 2: DENGAN OPTIMIZATION
     with tab2:
         st.header("⚡ Skenario 2: Dengan Indexing & Optimization")
-        st.success("📝 **Karakteristik:**\n- Menggunakan database indexes\n- Batch query processing\n- Optimized aggregation pipelines")
         
         if st.button("🚀 Jalankan Skenario 2", key="scenario2"):
             with st.spinner("Menjalankan analisis dengan optimization..."):
