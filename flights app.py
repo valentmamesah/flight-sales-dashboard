@@ -249,6 +249,7 @@ def run_scenario_2(orders_collection, driver, start_date, end_date):
     def get_routes(tx):
         return list(tx.run("""
         MATCH (a:Airport)-[r:CONNECTED_TO]->(b:Airport)
+        WHERE r.distance_km > 1000 AND r.flight_time_hr IS NOT NULL
         RETURN a.airport_code AS origin, b.airport_code AS destination, 
                r.distance_km AS distance_km, r.flight_time_hr AS flight_time_hr
         ORDER BY r.distance_km DESC LIMIT 50
