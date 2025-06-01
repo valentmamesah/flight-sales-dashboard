@@ -75,6 +75,8 @@ def init_neo4j_connection():
     
     try:
         driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+        # Test the connection
+        driver.verify_connectivity()
         return driver
     except Exception as e:
         st.error(f"Error connecting to Neo4j: {e}")
@@ -85,7 +87,9 @@ def init_mongodb_connection():
     MONGO_URI = "mongodb+srv://mongodb:akuvalent@cluster0.zq9clry.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
     
     try:
-        mongo_client = MongoClient(MONGO_URI)
+        mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        # Test the connection
+        mongo_client.admin.command('ping')
         mongo_db = mongo_client["ticketing"]
         return mongo_client, mongo_db
     except Exception as e:
@@ -329,11 +333,8 @@ def main():
             driver = init_neo4j_connection()
             mongo_client, mongo_db = init_mongodb_connection()
             
-            # FIX: Properly check if connections are successful
-            driver_ok = driver is not None
-            mongo_ok = mongo_db is not None
-            
-            if driver_ok and mongo_ok:
+            # FIXED: Properly check if connections are successful
+            if driver is not None and mongo_client is not None:
                 # MongoDB indexes
                 if create_mongodb_indexes(mongo_db):
                     st.sidebar.success("✅ MongoDB indexes created")
@@ -351,6 +352,8 @@ def main():
                     driver.close()
                 if mongo_client:
                     mongo_client.close()
+            else:
+                st.sidebar.error("❌ Gagal terhubung ke database untuk setup indexes!")
     
     # Tombol untuk menjalankan analisis
     if st.button("🚀 Jalankan Analisis", type="primary"):
@@ -362,6 +365,11 @@ def main():
             progress_bar = st.progress(0)
             status_text = st.empty()
             
+            # Initialize connection variables
+            driver = None
+            mongo_client = None
+            mongo_db = None
+            
             try:
                 # Inisialisasi koneksi SETELAH tombol ditekan
                 status_text.text("🔌 Menghubungkan ke database...")
@@ -370,13 +378,10 @@ def main():
                 driver = init_neo4j_connection()
                 mongo_client, mongo_db = init_mongodb_connection()
                 
-                # FIX: Properly check database connections
-                driver_ok = driver is not None
-                mongo_ok = mongo_db is not None
-                
-                if not driver_ok or not mongo_ok:
+                # FIXED: Properly check database connections
+                if driver is None or mongo_client is None:
                     st.error("❌ Gagal terhubung ke database!")
-                    st.stop()
+                    return
                 
                 orders_collection = mongo_db["orders"]
                 
@@ -669,14 +674,18 @@ def main():
                 st.exception(e)
             
             finally:
-                # Tutup koneksi di dalam try-finally block
-                try:
-                    if 'driver' in locals() and driver:
+                # FIXED: Better connection cleanup
+                if driver is not None:
+                    try:
                         driver.close()
-                    if 'mongo_client' in locals() and mongo_client:
+                    except Exception as close_error:
+                        st.warning(f"Warning saat menutup koneksi Neo4j: {close_error}")
+                
+                if mongo_client is not None:
+                    try:
                         mongo_client.close()
-                except Exception as close_error:
-                    st.warning(f"Warning saat menutup koneksi: {close_error}")
+                    except Exception as close_error:
+                        st.warning(f"Warning saat menutup koneksi MongoDB: {close_error}")
 
 if __name__ == "__main__":
     main()
