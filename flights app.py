@@ -89,7 +89,7 @@ def init_mongodb_connection():
     try:
         mongo_client = MongoClient(MONGO_URI)
         mongo_db = mongo_client["ticketing"]
-        return mongo_client, 
+        return mongo_client, mongo_db
     except Exception as e:
         st.error(f"Error connecting to MongoDB: {e}")
         return None, None
@@ -334,11 +334,11 @@ def main():
         with st.spinner("Membuat indexes..."):
             # Inisialisasi koneksi
             driver = init_neo4j_connection()
-            mongo_client,  = init_mongodb_connection()
+            mongo_client, mongo_db = init_mongodb_connection()
             
             if driver and mongo_db:
                 # MongoDB indexes
-                if create_mongodb_indexes():
+                if create_mongodb_indexes(mongo_db):
                     st.sidebar.success("✅ MongoDB indexes created")
                 
                 # Neo4j indexes
