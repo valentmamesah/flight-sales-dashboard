@@ -67,7 +67,6 @@ def create_neo4j_indexes(tx):
 # ----------------------------------------
 # FUNGSI KONEKSI DATABASE
 # ----------------------------------------
-@st.cache_resource
 def init_neo4j_connection():
     """Inisialisasi koneksi Neo4j"""
     NEO4J_URI = "neo4j+s://e4d78cf5.databases.neo4j.io"
@@ -81,7 +80,6 @@ def init_neo4j_connection():
         st.error(f"Error connecting to Neo4j: {e}")
         return None
 
-@st.cache_resource
 def init_mongodb_connection():
     """Inisialisasi koneksi MongoDB"""
     MONGO_URI = "mongodb+srv://mongodb:akuvalent@cluster0.zq9clry.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
@@ -324,11 +322,6 @@ def main():
         step=10
     )
     
-    # Opsi analisis tambahan
-    st.sidebar.subheader("📊 Opsi Analisis")
-    show_daily_trend = st.sidebar.checkbox("Tampilkan Trend Harian", value=True)
-    show_route_analysis = st.sidebar.checkbox("Analisis Rute Terjauh", value=True)
-    
     # Tombol untuk setup index
     if st.sidebar.button("🔧 Setup Database Indexes"):
         with st.spinner("Membuat indexes..."):
@@ -348,19 +341,15 @@ def main():
                     st.sidebar.success("✅ Neo4j indexes created")
                 except Exception as e:
                     st.sidebar.error(f"❌ Neo4j index error: {e}")
+                
+                # Tutup koneksi setelah setup
+                if driver:
+                    driver.close()
+                if mongo_client:
+                    mongo_client.close()
     
     # Tombol untuk menjalankan analisis
     if st.button("🚀 Jalankan Analisis", type="primary"):
-        # Inisialisasi koneksi
-        driver = init_neo4j_connection()
-        mongo_client, mongo_db = init_mongodb_connection()
-        
-        if driver is None or mongo_db is None:
-            st.error("❌ Gagal terhubung ke database!")
-            st.stop()
-        
-        orders_collection = mongo_db["orders"]
-        
         # Container untuk hasil
         results_container = st.container()
         
@@ -369,31 +358,36 @@ def main():
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            # 1. Total Penjualan Periode
-            status_text.text("📦 Menghitung total penjualan periode...")
-            progress_bar.progress(20)
-            
-            total_penjualan, total_orders, mongo_duration = get_total_sales_period(
-                orders_collection, start_datetime, end_datetime
-            )
-            
-            # 2. Trend Harian (opsional)
-            df_daily = pd.DataFrame()
-            daily_duration = 0
-            if show_daily_trend:
+            try:
+                # Inisialisasi koneksi SETELAH tombol ditekan
+                status_text.text("🔌 Menghubungkan ke database...")
+                progress_bar.progress(10)
+                
+                driver = init_neo4j_connection()
+                mongo_client, mongo_db = init_mongodb_connection()
+                
+                if driver is None or mongo_db is None:
+                    st.error("❌ Gagal terhubung ke database!")
+                    st.stop()
+                
+                orders_collection = mongo_db["orders"]
+                
+                # 1. Total Penjualan Periode
+                status_text.text("📦 Menghitung total penjualan periode...")
+                progress_bar.progress(20)
+                
+                total_penjualan, total_orders, mongo_duration = get_total_sales_period(
+                    orders_collection, start_datetime, end_datetime
+                )
+                
+                # 2. Trend Harian
                 status_text.text("📈 Menganalisis trend harian...")
                 progress_bar.progress(40)
                 df_daily, daily_duration = get_sales_by_date(
                     orders_collection, start_datetime, end_datetime
                 )
-            
-            # 3. Rute Terjauh dari Neo4j (opsional)
-            df_routes = pd.DataFrame()
-            neo_duration = 0
-            df_sorted = pd.DataFrame()
-            batch_duration = 0
-            
-            if show_route_analysis:
+                
+                # 3. Rute Terjauh dari Neo4j
                 status_text.text("🛫 Mengambil rute terjauh dari Neo4j...")
                 progress_bar.progress(60)
                 
@@ -402,6 +396,9 @@ def main():
                 # 4. Penjualan per Rute
                 status_text.text("📊 Menghitung penjualan per rute...")
                 progress_bar.progress(80)
+                
+                df_sorted = pd.DataFrame()
+                batch_duration = 0
                 
                 if not df_routes.empty:
                     origin_list = df_routes["origin"].unique().tolist()
@@ -428,120 +425,107 @@ def main():
                         by="total_penjualan_rute",
                         ascending=False
                     )
-            
-            progress_bar.progress(100)
-            status_text.text("✅ Analisis selesai!")
-            
-            # Tampilkan hasil
-            st.markdown("---")
-            
-            # Metrics
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric(
-                    "💰 Total Penjualan",
-                    f"Rp {total_penjualan:,}"
-                )
-            
-            with col2:
-                st.metric(
-                    "📦 Total Orders",
-                    f"{total_orders:,}"
-                )
-            
-            with col3:
-                avg_order_value = total_penjualan / total_orders if total_orders > 0 else 0
-                st.metric(
-                    "💳 Rata-rata per Order",
-                    f"Rp {avg_order_value:,.0f}"
-                )
-            
-            with col4:
-                daily_avg = total_penjualan / period_days if period_days > 0 else 0
-                st.metric(
-                    "📊 Rata-rata Harian",
-                    f"Rp {daily_avg:,.0f}"
-                )
-            
-            # Performance metrics
-            st.markdown("### ⚡ Performance Metrics")
-            perf_col1, perf_col2, perf_col3, perf_col4 = st.columns(4)
-            
-            with perf_col1:
-                st.metric("MongoDB Query", f"{mongo_duration:.4f}s")
-            with perf_col2:
-                if show_daily_trend:
-                    st.metric("Daily Trend Query", f"{daily_duration:.4f}s")
-            with perf_col3:
-                if show_route_analysis:
-                    st.metric("Neo4j Query", f"{neo_duration:.4f}s")
-            with perf_col4:
-                if show_route_analysis:
-                    st.metric("Route Sales Query", f"{batch_duration:.4f}s")
-            
-            # Tabs untuk hasil
-            tabs = ["📊 Ringkasan"]
-            if show_daily_trend:
-                tabs.append("📈 Trend Harian")
-            if show_route_analysis:
-                tabs.extend(["🛫 Rute Terjauh", "💹 Penjualan per Rute", "📈 Visualisasi Rute"])
-            
-            tab_objects = st.tabs(tabs)
-            tab_index = 0
-            
-            # Tab Ringkasan
-            with tab_objects[tab_index]:
-                st.subheader("📊 Ringkasan Analisis")
                 
-                col1, col2 = st.columns(2)
+                progress_bar.progress(100)
+                status_text.text("✅ Analisis selesai!")
+                
+                # Tampilkan hasil
+                st.markdown("---")
+                
+                # Metrics
+                col1, col2, col3, col4 = st.columns(4)
                 
                 with col1:
-                    st.info(f"""
-                    **Periode Analisis:** {start_date} - {end_date} ({period_days} hari)
-                    
-                    **Total Penjualan:** Rp {total_penjualan:,}
-                    
-                    **Total Orders:** {total_orders:,}
-                    
-                    **Rata-rata per Order:** Rp {avg_order_value:,.0f}
-                    
-                    **Rata-rata Harian:** Rp {daily_avg:,.0f}
-                    """)
+                    st.metric(
+                        "💰 Total Penjualan",
+                        f"Rp {total_penjualan:,}"
+                    )
                 
                 with col2:
-                    if show_route_analysis and not df_sorted.empty:
-                        top_route = df_sorted.iloc[0]
-                        st.success(f"""
-                        **Rute Terlaris:**
+                    st.metric(
+                        "📦 Total Orders",
+                        f"{total_orders:,}"
+                    )
+                
+                with col3:
+                    avg_order_value = total_penjualan / total_orders if total_orders > 0 else 0
+                    st.metric(
+                        "💳 Rata-rata per Order",
+                        f"Rp {avg_order_value:,.0f}"
+                    )
+                
+                with col4:
+                    daily_avg = total_penjualan / period_days if period_days > 0 else 0
+                    st.metric(
+                        "📊 Rata-rata Harian",
+                        f"Rp {daily_avg:,.0f}"
+                    )
+                
+                # Performance metrics
+                st.markdown("### ⚡ Performance Metrics")
+                perf_col1, perf_col2, perf_col3, perf_col4 = st.columns(4)
+                
+                with perf_col1:
+                    st.metric("MongoDB Query", f"{mongo_duration:.4f}s")
+                with perf_col2:
+                    st.metric("Daily Trend Query", f"{daily_duration:.4f}s")
+                with perf_col3:
+                    st.metric("Neo4j Query", f"{neo_duration:.4f}s")
+                with perf_col4:
+                    st.metric("Route Sales Query", f"{batch_duration:.4f}s")
+                
+                # Tabs untuk hasil
+                tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                    "📊 Ringkasan", "📈 Trend Harian", "🛫 Rute Terjauh", 
+                    "💹 Penjualan per Rute", "📈 Visualisasi Rute"
+                ])
+                
+                # Tab Ringkasan
+                with tab1:
+                    st.subheader("📊 Ringkasan Analisis")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.info(f"""
+                        **Periode Analisis:** {start_date} - {end_date} ({period_days} hari)
                         
-                        🛫 {top_route['origin']} → {top_route['destination']}
+                        **Total Penjualan:** Rp {total_penjualan:,}
                         
-                        💰 Penjualan: Rp {top_route['total_penjualan_rute']:,.0f}
+                        **Total Orders:** {total_orders:,}
                         
-                        📦 Orders: {top_route['jumlah_order_rute']:.0f}
+                        **Rata-rata per Order:** Rp {avg_order_value:,.0f}
                         
-                        📏 Jarak: {top_route['distance_km']:.0f} km
+                        **Rata-rata Harian:** Rp {daily_avg:,.0f}
                         """)
-                    else:
-                        performance_summary = f"""
-                        **Performance Summary:**
-                        
-                        ⚡ MongoDB: {mongo_duration:.4f}s
-                        """
-                        if show_daily_trend:
-                            performance_summary += f"\n⚡ Daily Trend: {daily_duration:.4f}s"
-                        if show_route_analysis:
-                            performance_summary += f"\n⚡ Neo4j: {neo_duration:.4f}s"
-                            performance_summary += f"\n⚡ Route Sales: {batch_duration:.4f}s"
-                        
-                        st.info(performance_summary)
-            
-            tab_index += 1
-            
-            # Tab Trend Harian
-            if show_daily_trend:
-                with tab_objects[tab_index]:
+                    
+                    with col2:
+                        if not df_sorted.empty:
+                            top_route = df_sorted.iloc[0]
+                            st.success(f"""
+                            **Rute Terlaris:**
+                            
+                            🛫 {top_route['origin']} → {top_route['destination']}
+                            
+                            💰 Penjualan: Rp {top_route['total_penjualan_rute']:,.0f}
+                            
+                            📦 Orders: {top_route['jumlah_order_rute']:.0f}
+                            
+                            📏 Jarak: {top_route['distance_km']:.0f} km
+                            """)
+                        else:
+                            performance_summary = f"""
+                            **Performance Summary:**
+                            
+                            ⚡ MongoDB: {mongo_duration:.4f}s
+                            ⚡ Daily Trend: {daily_duration:.4f}s
+                            ⚡ Neo4j: {neo_duration:.4f}s
+                            ⚡ Route Sales: {batch_duration:.4f}s
+                            """
+                            st.info(performance_summary)
+                
+                # Tab Trend Harian
+                with tab2:
                     st.subheader("📈 Trend Penjualan Harian")
                     if not df_daily.empty:
                         # Chart trend harian
@@ -578,11 +562,8 @@ def main():
                     else:
                         st.warning("Tidak ada data penjualan harian untuk periode ini.")
                 
-                tab_index += 1
-            
-            # Tab Rute Terjauh
-            if show_route_analysis:
-                with tab_objects[tab_index]:
+                # Tab Rute Terjauh
+                with tab3:
                     st.subheader("🛫 Top Rute Terjauh")
                     if not df_routes.empty:
                         st.dataframe(
@@ -602,10 +583,8 @@ def main():
                     else:
                         st.warning("Tidak ada data rute ditemukan.")
                 
-                tab_index += 1
-                
                 # Tab Penjualan per Rute
-                with tab_objects[tab_index]:
+                with tab4:
                     st.subheader("💹 Penjualan per Rute (Diurutkan)")
                     if not df_sorted.empty:
                         st.dataframe(
@@ -633,10 +612,8 @@ def main():
                     else:
                         st.warning("Tidak ada data penjualan ditemukan.")
                 
-                tab_index += 1
-                
                 # Tab Visualisasi Rute
-                with tab_objects[tab_index]:
+                with tab5:
                     st.subheader("📈 Visualisasi Data Rute")
                     
                     if not df_sorted.empty:
@@ -678,10 +655,20 @@ def main():
                             st.info("Tidak ada data penjualan untuk divisualisasikan.")
                     else:
                         st.warning("Tidak ada data untuk divisualisasikan.")
-        
-        # Tutup koneksi
-        driver.close()
-        mongo_client.close()
+            
+            except Exception as e:
+                st.error(f"❌ Error saat menjalankan analisis: {str(e)}")
+                st.exception(e)
+            
+            finally:
+                # Tutup koneksi di dalam try-finally block
+                try:
+                    if 'driver' in locals() and driver:
+                        driver.close()
+                    if 'mongo_client' in locals() and mongo_client:
+                        mongo_client.close()
+                except Exception as close_error:
+                    st.warning(f"Warning saat menutup koneksi: {close_error}")
 
 if __name__ == "__main__":
     main()
