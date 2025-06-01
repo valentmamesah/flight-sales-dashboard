@@ -64,6 +64,30 @@ def create_neo4j_indexes(tx):
     ON (r.distance_km, r.flight_time_hr);
     """)
 
+def drop_mongodb_indexes(mongo_db):
+    """Menghapus index MongoDB"""
+    orders = mongo_db["orders"]
+    flight_prices = mongo_db["flight_prices"]
+
+    try:
+        # Drop indexes from orders collection
+        orders.drop_index("idx_depart_date")
+        orders.drop_index("idx_flight_id")
+        orders.drop_index("idx_origin_dest_date")
+        
+        # Drop indexes from flight_prices collection
+        flight_prices.drop_index("idx_fp_id")
+        
+        return True
+    except Exception as e:
+        st.error(f"Error dropping MongoDB indexes: {e}")
+        return False
+
+def drop_neo4j_indexes(tx):
+    """Menghapus index Neo4j"""
+    tx.run("DROP INDEX idx_airport_code IF EXISTS")
+    tx.run("DROP INDEX idx_ct_distance_time IF EXISTS")
+
 # ----------------------------------------
 # FUNGSI KONEKSI DATABASE
 # ----------------------------------------
@@ -266,28 +290,13 @@ def main():
     # Preset periode
     preset_option = st.sidebar.selectbox(
         "Pilih Preset Periode:",
-        ["Custom", "Ramadhan 2023", "Bulan Ini", "3 Bulan Terakhir", "Tahun Ini"]
+        ["Custom", "Ramadhan 2023"]
     )
     
     # Set default dates berdasarkan preset
     if preset_option == "Ramadhan 2023":
         default_start = date(2023, 3, 10)
         default_end = date(2023, 4, 9)
-    elif preset_option == "Bulan Ini":
-        today = date.today()
-        default_start = date(today.year, today.month, 1)
-        default_end = today
-    elif preset_option == "3 Bulan Terakhir":
-        today = date.today()
-        if today.month >= 3:
-            default_start = date(today.year, today.month - 2, 1)
-        else:
-            default_start = date(today.year - 1, today.month + 10, 1)
-        default_end = today
-    elif preset_option == "Tahun Ini":
-        today = date.today()
-        default_start = date(today.year, 1, 1)
-        default_end = today
     else:  # Custom
         default_start = date(2023, 3, 10)
         default_end = date(2023, 4, 9)
@@ -327,36 +336,80 @@ def main():
     )
     
     # Tombol untuk setup index
-    if st.sidebar.button("🔧 Setup Database Indexes"):
-        with st.spinner("Membuat indexes..."):
-            # Inisialisasi koneksi
-            driver = init_neo4j_connection()
-            mongo_client, mongo_db = init_mongodb_connection()
-            
-            # FIXED: Properly check if connections are successful
-            if driver is not None and mongo_client is not None:
-                # MongoDB indexes
-                if create_mongodb_indexes(mongo_db):
-                    st.sidebar.success("✅ MongoDB indexes created")
+    col_setup, col_drop = st.sidebar.columns(2)
+    
+    with col_setup:
+        if st.button("🔧 Setup Indexes", use_container_width=True):
+            index_start_time = time.time()
+            with st.spinner("Membuat indexes..."):
+                # Inisialisasi koneksi
+                driver = init_neo4j_connection()
+                mongo_client, mongo_db = init_mongodb_connection()
                 
-                # Neo4j indexes
-                try:
-                    with driver.session() as session:
-                        session.execute_write(create_neo4j_indexes)
-                    st.sidebar.success("✅ Neo4j indexes created")
-                except Exception as e:
-                    st.sidebar.error(f"❌ Neo4j index error: {e}")
+                # FIXED: Properly check if connections are successful
+                if driver is not None and mongo_client is not None:
+                    # MongoDB indexes
+                    if create_mongodb_indexes(mongo_db):
+                        st.sidebar.success("✅ MongoDB indexes created")
+                    
+                    # Neo4j indexes
+                    try:
+                        with driver.session() as session:
+                            session.execute_write(create_neo4j_indexes)
+                        st.sidebar.success("✅ Neo4j indexes created")
+                    except Exception as e:
+                        st.sidebar.error(f"❌ Neo4j index error: {e}")
+                    
+                    index_end_time = time.time()
+                    index_duration = index_end_time - index_start_time
+                    st.sidebar.info(f"⏱️ Setup selesai dalam {index_duration:.2f} detik")
+                    
+                    # Tutup koneksi setelah setup
+                    if driver:
+                        driver.close()
+                    if mongo_client:
+                        mongo_client.close()
+                else:
+                    st.sidebar.error("❌ Gagal terhubung ke database untuk setup indexes!")
+    
+    with col_drop:
+        if st.button("🗑️ Drop Indexes", use_container_width=True):
+            drop_start_time = time.time()
+            with st.spinner("Menghapus indexes..."):
+                # Inisialisasi koneksi
+                driver = init_neo4j_connection()
+                mongo_client, mongo_db = init_mongodb_connection()
                 
-                # Tutup koneksi setelah setup
-                if driver:
-                    driver.close()
-                if mongo_client:
-                    mongo_client.close()
-            else:
-                st.sidebar.error("❌ Gagal terhubung ke database untuk setup indexes!")
+                if driver is not None and mongo_client is not None:
+                    # Drop MongoDB indexes
+                    if drop_mongodb_indexes(mongo_db):
+                        st.sidebar.success("✅ MongoDB indexes dihapus")
+                    
+                    # Drop Neo4j indexes
+                    try:
+                        with driver.session() as session:
+                            session.execute_write(drop_neo4j_indexes)
+                        st.sidebar.success("✅ Neo4j indexes dihapus")
+                    except Exception as e:
+                        st.sidebar.error(f"❌ Neo4j drop index error: {e}")
+                    
+                    drop_end_time = time.time()
+                    drop_duration = drop_end_time - drop_start_time
+                    st.sidebar.info(f"⏱️ Drop selesai dalam {drop_duration:.2f} detik")
+                    
+                    # Tutup koneksi setelah drop
+                    if driver:
+                        driver.close()
+                    if mongo_client:
+                        mongo_client.close()
+                else:
+                    st.sidebar.error("❌ Gagal terhubung ke database untuk drop indexes!")
     
     # Tombol untuk menjalankan analisis
     if st.button("🚀 Jalankan Analisis", type="primary"):
+        # Waktu mulai analisis keseluruhan
+        analysis_start_time = time.time()
+        
         # Container untuk hasil
         results_container = st.container()
         
@@ -374,9 +427,13 @@ def main():
                 # Inisialisasi koneksi SETELAH tombol ditekan
                 status_text.text("🔌 Menghubungkan ke database...")
                 progress_bar.progress(10)
+                connection_start = time.time()
                 
                 driver = init_neo4j_connection()
                 mongo_client, mongo_db = init_mongodb_connection()
+                
+                connection_end = time.time()
+                connection_duration = connection_end - connection_start
                 
                 # FIXED: Properly check database connections
                 if driver is None or mongo_client is None:
@@ -440,7 +497,12 @@ def main():
                     )
                 
                 progress_bar.progress(100)
-                status_text.text("✅ Analisis selesai!")
+                
+                # Hitung total waktu analisis
+                analysis_end_time = time.time()
+                total_analysis_duration = analysis_end_time - analysis_start_time
+                
+                status_text.text(f"✅ Analisis selesai dalam {total_analysis_duration:.2f} detik!")
                 
                 # Tampilkan hasil
                 st.markdown("---")
@@ -476,16 +538,43 @@ def main():
                 
                 # Performance metrics
                 st.markdown("### ⚡ Performance Metrics")
-                perf_col1, perf_col2, perf_col3, perf_col4 = st.columns(4)
+                perf_col1, perf_col2, perf_col3, perf_col4, perf_col5 = st.columns(5)
                 
                 with perf_col1:
-                    st.metric("MongoDB Query", f"{mongo_duration:.4f}s")
+                    st.metric("🔌 Koneksi Database", f"{connection_duration:.4f}s")
                 with perf_col2:
-                    st.metric("Daily Trend Query", f"{daily_duration:.4f}s")
+                    st.metric("📦 MongoDB Query", f"{mongo_duration:.4f}s")
                 with perf_col3:
-                    st.metric("Neo4j Query", f"{neo_duration:.4f}s")
+                    st.metric("📈 Daily Trend Query", f"{daily_duration:.4f}s")
                 with perf_col4:
-                    st.metric("Route Sales Query", f"{batch_duration:.4f}s")
+                    st.metric("🛫 Neo4j Query", f"{neo_duration:.4f}s")
+                with perf_col5:
+                    st.metric("📊 Route Sales Query", f"{batch_duration:.4f}s")
+                
+                # Total analysis time metric
+                st.markdown("### 🕐 Total Analysis Time")
+                total_col1, total_col2, total_col3 = st.columns(3)
+                
+                with total_col1:
+                    st.metric(
+                        "⏱️ Total Waktu Analisis",
+                        f"{total_analysis_duration:.2f} detik",
+                        help="Waktu total dari mulai hingga selesai analisis"
+                    )
+                with total_col2:
+                    query_time = mongo_duration + daily_duration + neo_duration + batch_duration
+                    st.metric(
+                        "🔍 Total Query Time",
+                        f"{query_time:.4f} detik",
+                        help="Total waktu untuk semua query database"
+                    )
+                with total_col3:
+                    overhead_time = total_analysis_duration - query_time - connection_duration
+                    st.metric(
+                        "⚙️ Processing Overhead",
+                        f"{overhead_time:.4f} detik",
+                        help="Waktu untuk pemrosesan data dan rendering UI"
+                    )
                 
                 # Tabs untuk hasil
                 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -530,10 +619,13 @@ def main():
                             performance_summary = f"""
                             **Performance Summary:**
                             
+                            🔌 Koneksi: {connection_duration:.4f}s
                             ⚡ MongoDB: {mongo_duration:.4f}s
                             ⚡ Daily Trend: {daily_duration:.4f}s
                             ⚡ Neo4j: {neo_duration:.4f}s
                             ⚡ Route Sales: {batch_duration:.4f}s
+                            
+                            ⏱️ **Total Analisis: {total_analysis_duration:.2f}s**
                             """
                             st.info(performance_summary)
                 
