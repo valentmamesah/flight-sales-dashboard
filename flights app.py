@@ -329,7 +329,11 @@ def main():
             driver = init_neo4j_connection()
             mongo_client, mongo_db = init_mongodb_connection()
             
-            if driver and mongo_db:
+            # FIX: Properly check if connections are successful
+            driver_ok = driver is not None
+            mongo_ok = mongo_db is not None
+            
+            if driver_ok and mongo_ok:
                 # MongoDB indexes
                 if create_mongodb_indexes(mongo_db):
                     st.sidebar.success("✅ MongoDB indexes created")
@@ -366,7 +370,11 @@ def main():
                 driver = init_neo4j_connection()
                 mongo_client, mongo_db = init_mongodb_connection()
                 
-                if driver is None or mongo_db is None:
+                # FIX: Properly check database connections
+                driver_ok = driver is not None
+                mongo_ok = mongo_db is not None
+                
+                if not driver_ok or not mongo_ok:
                     st.error("❌ Gagal terhubung ke database!")
                     st.stop()
                 
