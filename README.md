@@ -1,6 +1,6 @@
 # Flight Ticket Sales & Performance Analysis Dashboard
 
-A professional Streamlit application for analyzing flight ticket sales with database performance optimization comparison.
+A application for analyzing flight ticket sales with database performance optimization comparison.
 
 ## Overview
 
